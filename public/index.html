@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vercel 留言板</title>
+    <script
+      src="https://cdn.jsdelivr.net/npm/@fingerprintjs/fingerprintjs@3/dist/fp.min.js"
+    ></script>
     <style>
       body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
@@ -26,9 +29,15 @@
         border-radius: 8px;
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
       }
+      .title-container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
       h1 {
         text-align: center;
         color: #5a5a5a;
+        margin-bottom: 20px;
       }
       .controls {
         display: flex;
@@ -68,6 +77,17 @@
       #clickButton:hover {
         background-color: #0056b3;
       }
+      #refreshButton {
+        background: none;
+        border: none;
+        font-size: 24px;
+        cursor: pointer;
+        padding: 0 5px;
+        color: #6c757d;
+      }
+      #refreshButton:hover {
+        color: #007bff;
+      }
       #entries {
         list-style-type: none;
         padding: 0;
@@ -78,12 +98,52 @@
         border-radius: 4px;
         margin-bottom: 10px;
         word-wrap: break-word;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      #entries li button {
+        padding: 5px 10px;
+        border: none;
+        background-color: #dc3545;
+        color: white;
+        border-radius: 4px;
+        cursor: pointer;
+        flex-shrink: 0;
+        margin-left: 10px;
+      }
+      #entries li button:hover {
+        background-color: #c82333;
+      }
+      .delete-user-button {
+        background-color: #ffc107 !important;
+        color: #212529 !important;
+      }
+      .delete-user-button:hover {
+        background-color: #e0a800 !important;
+      }
+      .admin-danger-button {
+        padding: 10px 15px;
+        border: none;
+        color: white;
+        border-radius: 4px;
+        cursor: pointer;
+        background-color: #dc3545;
       }
       .timestamp {
         font-size: 0.8em;
         color: #6c757d;
         display: block;
         margin-top: 5px;
+      }
+      .fingerprint {
+        font-size: 0.75em;
+        color: #007bff;
+        font-family: monospace;
+        display: block;
+        margin-bottom: 5px;
+        cursor: pointer;
+        word-break: break-all;
       }
       .loader {
         border: 4px solid #f3f3f3; /* Light grey */
@@ -94,6 +154,16 @@
         animation: spin 1s linear infinite;
         margin: 20px auto;
         display: none; /* Initially hidden */
+      }
+      #admin-panel {
+        background-color: #fff3cd;
+        border: 1px solid #ffeeba;
+        padding: 15px;
+        border-radius: 4px;
+        margin-bottom: 20px;
+      }
+      #admin-panel h3 {
+        margin-top: 0;
       }
 
       @keyframes spin {
@@ -108,13 +178,24 @@
   </head>
   <body>
     <div class="container">
-      <h1>Vercel 留言板</h1>
+      <div class="title-container">
+        <h1>Vercel 留言板</h1>
+        <button id="refreshButton" title="刷新列表">🔄</button>
+      </div>
       <div class="controls">
         <div class="input-group">
           <input type="text" id="messageInput" placeholder="输入留言内容..." />
           <button id="submitButton">提交</button>
         </div>
         <button id="clickButton">记录一次点击</button>
+      </div>
+      <div id="filter-status" style="display: none; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;">
+        <span id="filter-text"></span>
+        <button id="clearFilterButton">清除筛选</button>
+      </div>
+      <div id="admin-panel" style="display: none;">
+        <h3>管理员面板</h3>
+        <button id="deleteAllButton" class="admin-danger-button">删除所有记录</button>
       </div>
       <div id="loader" class="loader"></div>
       <ul id="entries">
@@ -128,7 +209,18 @@
       const clickButton = document.getElementById("clickButton");
       const entriesList = document.getElementById("entries");
       const loader = document.getElementById("loader");
+      const adminPanel = document.getElementById("admin-panel");
+      const deleteAllButton = document.getElementById("deleteAllButton");
+      const filterStatus = document.getElementById("filter-status");
+      const filterText = document.getElementById("filter-text");
+      const clearFilterButton = document.getElementById("clearFilterButton");
+      const refreshButton = document.getElementById("refreshButton");
       const apiUrl = "/api/guestbook";
+
+      let visitorId = null;
+      const urlParams = new URLSearchParams(window.location.search);
+      const isAdmin = urlParams.get("admin") === "1";
+      let currentFilterFingerprint = null; // 用于跟踪当前的筛选状态
 
       const setLoading = (isLoading) => {
         if (isLoading) {
@@ -152,26 +244,93 @@
           entriesList.innerHTML = "<li>还没有记录，快来添加第一条吧！</li>";
           return;
         }
+        // 后端现在直接返回对象数组
         entries.forEach((entry) => {
           const li = document.createElement("li");
-          li.textContent =
-            entry.type === "message" ? entry.content : "按钮被点击了。";
 
+          const contentWrapper = document.createElement("div");
+
+          // 显示指纹
+          if (entry.fingerprint) {
+            const fingerprintSpan = document.createElement("span");
+            fingerprintSpan.className = "fingerprint";
+            // 为了美观，只显示部分指纹
+            fingerprintSpan.textContent = `ID: ${entry.fingerprint.substring(
+              0,
+              8
+            )}... (点击筛选)`;
+            fingerprintSpan.onclick = () => fetchEntries(entry.fingerprint);
+            contentWrapper.appendChild(fingerprintSpan);
+          }
+
+          // 显示内容
+          const textNode = document.createTextNode(
+            entry.type === "message" ? entry.content : "按钮被点击了。"
+          );
+          contentWrapper.appendChild(textNode);
+
+          // 显示时间戳
           const timeSpan = document.createElement("span");
           timeSpan.className = "timestamp";
           timeSpan.textContent = new Date(entry.timestamp).toLocaleString(
             "zh-CN"
           );
-          li.appendChild(timeSpan);
+          contentWrapper.appendChild(timeSpan);
+
+          li.appendChild(contentWrapper);
+
+          if (isAdmin) {
+            const deleteButton = document.createElement("button");
+            deleteButton.textContent = "删除此条";
+            deleteButton.title = "仅删除此条记录";
+            deleteButton.onclick = () => deleteEntry(JSON.stringify(entry));
+
+            const deleteUserButton = document.createElement("button");
+            deleteUserButton.textContent = "删除此用户";
+            deleteUserButton.title = `删除此用户 (${entry.fingerprint.substring(
+              0,
+              8
+            )}...) 的所有记录`;
+            deleteUserButton.className = "delete-user-button";
+            deleteUserButton.onclick = () => deleteByFingerprint(entry.fingerprint);
+            li.appendChild(deleteUserButton);
+            li.appendChild(deleteButton);
+          }
 
           entriesList.appendChild(li);
         });
       };
 
-      const fetchEntries = async () => {
+      const fetchEntries = async (fingerprint = null) => {
+        currentFilterFingerprint = fingerprint; // 更新当前的筛选状态
+        let url = apiUrl;
+        if (fingerprint) {
+          url = `${apiUrl}?fingerprint=${fingerprint}`;
+          filterStatus.style.display = "flex";
+          filterText.textContent = `筛选中: ${fingerprint.substring(0, 8)}...`;
+        } else {
+          filterStatus.style.display = "none";
+        }
+
+        // 根据是否在筛选状态，更新管理员删除按钮的文本和功能提示
+        if (isAdmin) {
+          if (currentFilterFingerprint) {
+            deleteAllButton.textContent = "删除筛选出的记录";
+            deleteAllButton.title = `删除用户 (${currentFilterFingerprint.substring(
+              0,
+              8
+            )}...) 的所有记录`;
+          } else {
+            deleteAllButton.textContent = "删除所有记录";
+            deleteAllButton.title = "删除所有留言板记录";
+          }
+        }
+
         try {
           setLoading(true);
-          const response = await fetch(apiUrl);
+          // 清空现有列表以避免在加载时看到旧数据
+          entriesList.innerHTML = "";
+          const response = await fetch(url);
           if (!response.ok) {
             throw new Error(`HTTP error! Status: ${response.status}`);
           }
@@ -186,18 +345,84 @@
       };
 
       const addEntry = async (type, content = null) => {
+        if (!visitorId) {
+          alert("正在生成身份标识，请稍后重试。");
+          setLoading(false); // 取消加载状态
+          return;
+        }
         // 立即禁用按钮以提供即时反馈
         setLoading(true);
         try {
           await fetch(apiUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ type, content }),
+            body: JSON.stringify({ type, content, fingerprint: visitorId }),
           });
         } catch (error) {
           console.error("添加记录失败:", error);
         } finally {
           await fetchEntries(); // 重新获取列表，该函数会处理loading状态的结束
+        }
+      };
+
+      const deleteEntry = async (entryString) => {
+        if (!confirm("确定要删除这条记录吗？")) {
+          return;
+        }
+        setLoading(true);
+        try {
+          await fetch(`${apiUrl}?admin=1`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ entry: entryString }),
+          });
+        } catch (error) {
+          console.error("删除记录失败:", error);
+        } finally {
+          await fetchEntries();
+        }
+      };
+
+      const deleteAllEntries = async () => {
+        // 如果处于筛选状态，此按钮的功能变为“删除筛选出的记录”
+        if (currentFilterFingerprint) {
+          await deleteByFingerprint(currentFilterFingerprint);
+        } else {
+          // 否则，执行“删除所有记录”的原始功能
+          if (
+            !confirm("警告：此操作将永久删除所有记录，无法恢复。确定要继续吗？")
+          ) {
+            return;
+          }
+          setLoading(true);
+          try {
+            await fetch(`${apiUrl}?admin=1&action=delete_all`, {
+              method: "DELETE",
+            });
+          } catch (error) {
+            console.error("删除全部记录失败:", error);
+          } finally {
+            await fetchEntries();
+          }
+        }
+      };
+
+      const deleteByFingerprint = async (fingerprint) => {
+        if (!confirm(`确定要删除来自用户 (${fingerprint.substring(0,8)}...) 的所有记录吗？`)) {
+          return;
+        }
+        setLoading(true);
+        try {
+          await fetch(`${apiUrl}?admin=1`, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ fingerprint }),
+          });
+        } catch (error) {
+          console.error("按指纹删除记录失败:", error);
+        } finally {
+          // 如果当前正在筛选此指纹，则清除筛选；否则，保持当前视图
+          await fetchEntries(currentFilterFingerprint === fingerprint ? null : currentFilterFingerprint);
         }
       };
 
@@ -209,6 +434,19 @@
         }
       };
 
+      if (isAdmin) {
+        adminPanel.style.display = "block";
+        deleteAllButton.addEventListener("click", deleteAllEntries);
+      }
+
+      clearFilterButton.addEventListener("click", () => {
+        fetchEntries();
+      });
+
+      refreshButton.addEventListener("click", () => {
+        fetchEntries(currentFilterFingerprint);
+      });
+
       clickButton.addEventListener("click", () => addEntry("click"));
       submitButton.addEventListener("click", submitMessage);
       messageInput.addEventListener("keydown", (event) => {
@@ -219,7 +457,15 @@
       });
 
       document.addEventListener("DOMContentLoaded", () => {
-        fetchEntries();
+        // 初始化指纹并获取记录
+        const init = async () => {
+          const fp = await FingerprintJS.load();
+          const result = await fp.get();
+          visitorId = result.visitorId;
+          console.log("Browser Fingerprint:", visitorId);
+          await fetchEntries();
+        };
+        init().catch(console.error);
       });
     </script>
   </body>
