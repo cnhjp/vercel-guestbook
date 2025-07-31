@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vercel 留言板</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+        background-color: #f4f4f9;
+        color: #333;
+        margin: 0;
+        padding: 20px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+      }
+      .container {
+        width: 100%;
+        max-width: 600px;
+        margin: auto;
+        background: white;
+        padding: 25px;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      }
+      h1 {
+        text-align: center;
+        color: #5a5a5a;
+      }
+      .controls {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        margin-bottom: 20px;
+      }
+      .input-group {
+        display: flex;
+        gap: 10px;
+      }
+      #messageInput {
+        flex-grow: 1;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 16px;
+      }
+      #submitButton,
+      #clickButton {
+        padding: 10px 15px;
+        border: none;
+        color: white;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background-color 0.2s;
+      }
+      #submitButton {
+        background-color: #28a745;
+      }
+      #submitButton:hover {
+        background-color: #218838;
+      }
+      #clickButton {
+        background-color: #007bff;
+      }
+      #clickButton:hover {
+        background-color: #0056b3;
+      }
+      #entries {
+        list-style-type: none;
+        padding: 0;
+      }
+      #entries li {
+        background: #e9ecef;
+        padding: 12px;
+        border-radius: 4px;
+        margin-bottom: 10px;
+        word-wrap: break-word;
+      }
+      .timestamp {
+        font-size: 0.8em;
+        color: #6c757d;
+        display: block;
+        margin-top: 5px;
+      }
+      .loader {
+        border: 4px solid #f3f3f3; /* Light grey */
+        border-top: 4px solid #007bff; /* Blue */
+        border-radius: 50%;
+        width: 30px;
+        height: 30px;
+        animation: spin 1s linear infinite;
+        margin: 20px auto;
+        display: none; /* Initially hidden */
+      }
+
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Vercel 留言板</h1>
+      <div class="controls">
+        <div class="input-group">
+          <input type="text" id="messageInput" placeholder="输入留言内容..." />
+          <button id="submitButton">提交</button>
+        </div>
+        <button id="clickButton">记录一次点击</button>
+      </div>
+      <div id="loader" class="loader"></div>
+      <ul id="entries">
+        <!-- 记录将由JS动态加载 -->
+      </ul>
+    </div>
+
+    <script>
+      const messageInput = document.getElementById("messageInput");
+      const submitButton = document.getElementById("submitButton");
+      const clickButton = document.getElementById("clickButton");
+      const entriesList = document.getElementById("entries");
+      const loader = document.getElementById("loader");
+      const apiUrl = "/api/guestbook";
+
+      const setLoading = (isLoading) => {
+        if (isLoading) {
+          loader.style.display = "block";
+          entriesList.style.display = "none";
+          messageInput.disabled = true;
+          submitButton.disabled = true;
+          clickButton.disabled = true;
+        } else {
+          loader.style.display = "none";
+          entriesList.style.display = "block";
+          messageInput.disabled = false;
+          submitButton.disabled = false;
+          clickButton.disabled = false;
+        }
+      };
+
+      const renderEntries = (entries) => {
+        entriesList.innerHTML = "";
+        if (entries.length === 0) {
+          entriesList.innerHTML = "<li>还没有记录，快来添加第一条吧！</li>";
+          return;
+        }
+        entries.forEach((entry) => {
+          const li = document.createElement("li");
+          li.textContent =
+            entry.type === "message" ? entry.content : "按钮被点击了。";
+
+          const timeSpan = document.createElement("span");
+          timeSpan.className = "timestamp";
+          timeSpan.textContent = new Date(entry.timestamp).toLocaleString(
+            "zh-CN"
+          );
+          li.appendChild(timeSpan);
+
+          entriesList.appendChild(li);
+        });
+      };
+
+      const fetchEntries = async () => {
+        try {
+          setLoading(true);
+          const response = await fetch(apiUrl);
+          if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+          }
+          const entries = await response.json();
+          renderEntries(entries);
+        } catch (error) {
+          console.error("获取记录失败:", error);
+          entriesList.innerHTML = "<li>加载记录失败，请检查后端服务。</li>";
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const addEntry = async (type, content = null) => {
+        // 立即禁用按钮以提供即时反馈
+        setLoading(true);
+        try {
+          await fetch(apiUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type, content }),
+          });
+        } catch (error) {
+          console.error("添加记录失败:", error);
+        } finally {
+          await fetchEntries(); // 重新获取列表，该函数会处理loading状态的结束
+        }
+      };
+
+      const submitMessage = () => {
+        const content = messageInput.value.trim();
+        if (content) {
+          addEntry("message", content);
+          messageInput.value = "";
+        }
+      };
+
+      clickButton.addEventListener("click", () => addEntry("click"));
+      submitButton.addEventListener("click", submitMessage);
+      messageInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault(); // 防止可能的表单默认提交行为
+          submitMessage();
+        }
+      });
+
+      document.addEventListener("DOMContentLoaded", () => {
+        fetchEntries();
+      });
+    </script>
+  </body>
+</html>
